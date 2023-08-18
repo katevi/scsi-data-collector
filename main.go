@@ -2,17 +2,22 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path"
+	devicelister "scsicollector/internal"
+	"strings"
+
 	"time"
 )
 
 const (
 	//period = 10 * time.Minutes
-	period = 1 * time.Second
-	dir    = "./data"
+	period     = 1 * time.Second
+	dir        = "./data"
+	allDevices = ""
 )
 
 func main() {
@@ -22,16 +27,17 @@ func main() {
 
 	for {
 		time.Sleep(period)
-		execCommand()
+		blockDevices, _ := devicelister.GetBlockDevices(allDevices)
+		for _, blockDevice := range blockDevices {
+			go execCommand(blockDevice)
+		}
 	}
 }
 
-func execCommand() {
-	log.Printf("Hello, world!")
-	cmd := exec.Command("bash", "-c", "sg_logs -a /dev/sda")
+func execCommand(device devicelister.BlockDevice) {
+	cmdArgs := fmt.Sprintf("sg_logs -a %s", device.Name)
+	cmd := exec.Command("bash", "-c", cmdArgs)
 
-	// open the out file for writing
-	t := time.Now().UTC().Format("2006-01-02-15-04-05")
 	var outb, errb bytes.Buffer
 	cmd.Stdout = &outb
 	cmd.Stderr = &errb
@@ -39,8 +45,24 @@ func execCommand() {
 	if err != nil {
 		log.Printf("Cmd execution completed with err %s %v", err, errb.String())
 	}
-	err = os.WriteFile(path.Join(dir, t), outb.Bytes(), os.ModePerm)
+	deviceName := device.Name
+	deviceName = strings.ReplaceAll(deviceName, "/", "_")
+	filepath := path.Join(dir, deviceName)
+
+	dumpDatatoFile(filepath, []byte(cmdArgs),
+		[]byte(time.Now().String()), outb.Bytes(), errb.Bytes())
+}
+
+func dumpDatatoFile(filepath string, contents ...[]byte) {
+	// If the file doesn't exist, create it, or append to the file
+	f, err := os.OpenFile(filepath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("Writing result to file completed with err %s %v", err, errb)
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	for _, content := range contents {
+		f.Write(content)
+		f.Write([]byte("\n"))
 	}
 }
