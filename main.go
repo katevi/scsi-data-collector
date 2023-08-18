@@ -15,26 +15,37 @@ import (
 
 const (
 	//period = 10 * time.Minutes
-	period     = 1 * time.Second
-	dir        = "./data"
-	allDevices = ""
+	period           = 1 * time.Second
+	collectedDataDir = "./data"
+	allDevicesKey    = ""
+	appName          = "scsi-data-collector"
 )
 
 func main() {
-	if err := os.Mkdir(dir, os.ModePerm); err != nil {
-		log.Printf("Failed to create dir %s", err)
+	// log to custom file
+	logFileName := fmt.Sprintf("%s.log", appName)
+	// open log file
+	logFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer logFile.Close()
+	appLog := log.New(logFile, appName, log.Lshortfile|log.LstdFlags)
+
+	if err := os.Mkdir(collectedDataDir, os.ModePerm); err != nil {
+		appLog.Printf("Failed to create dir %s", err)
 	}
 
 	for {
 		time.Sleep(period)
-		blockDevices, _ := devicelister.GetBlockDevices(allDevices)
+		blockDevices, _ := devicelister.GetBlockDevices(allDevicesKey)
 		for _, blockDevice := range blockDevices {
-			go execCommand(blockDevice)
+			go execCommand(appLog, blockDevice)
 		}
 	}
 }
 
-func execCommand(device devicelister.BlockDevice) {
+func execCommand(appLog *log.Logger, device devicelister.BlockDevice) {
 	cmdArgs := fmt.Sprintf("sg_logs -a %s", device.Name)
 	cmd := exec.Command("bash", "-c", cmdArgs)
 
@@ -43,14 +54,17 @@ func execCommand(device devicelister.BlockDevice) {
 	cmd.Stderr = &errb
 	err := cmd.Run()
 	if err != nil {
-		log.Printf("Cmd execution completed with err %s %v", err, errb.String())
+		appLog.Printf("Cmd execution completed with err %s %v", err, errb.String())
 	}
 	deviceName := device.Name
 	deviceName = strings.ReplaceAll(deviceName, "/", "_")
-	filepath := path.Join(dir, deviceName)
+	filepath := path.Join(collectedDataDir, deviceName)
 
-	dumpDatatoFile(filepath, []byte(cmdArgs),
-		[]byte(time.Now().String()), outb.Bytes(), errb.Bytes())
+	dumpDatatoFile(filepath,
+		[]byte(fmt.Sprint("cmd:\n", cmdArgs)),
+		[]byte(fmt.Sprint("time:\n", time.Now().String())),
+		[]byte(fmt.Sprint("out:\n", outb.String())),
+		[]byte(fmt.Sprint("err:\n", errb.String())))
 }
 
 func dumpDatatoFile(filepath string, contents ...[]byte) {
